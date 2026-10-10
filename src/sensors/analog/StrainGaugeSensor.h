@@ -43,6 +43,9 @@ struct StrainGaugeADCSettings
 {
     ADS131M08::OSR osr = ADS131M08::OSR::OSR_4096;
 
+    // The datasheet specifies low-power mode at a 4.096 MHz CLKIN
+    ADS131M08::PowerMode powerMode = ADS131M08::PowerMode::LOW_POWER;
+
     // Conversions averaged per read()
     int samplesPerReading = 8;
 
@@ -88,17 +91,22 @@ public:
 
     bool isUsingDrdy() const;
 
+    // False if the external reference was requested but could not be enabled
+    bool isUsingExternalReference() const;
+
 private:
     ADS131M08 adc;
     std::vector<StrainChannelConfig> channels;
     StrainGaugeADCSettings settings;
 
-    // Conversion reference voltage, from the settings
+    // Conversion reference voltage, set by init()
     float vref;
 
     // ADC DRDY pin, owned by the caller. May be null.
     GPIOInput* drdy;
     bool useDrdy;
+
+    bool externalReferenceActive;
 
     bool initialised;
 

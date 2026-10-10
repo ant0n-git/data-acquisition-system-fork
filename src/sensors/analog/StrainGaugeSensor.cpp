@@ -33,12 +33,10 @@ StrainGaugeSensor::StrainGaugeSensor(
       adc(sharedBus),
       channels(std::move(channels)),
       settings(settings),
-      vref(ADS131M08::effectiveReference(
-          settings.externalReference,
-          settings.refinVolts
-      )),
+      vref(ADS131M08::INTERNAL_VREF),
       drdy(drdy),
       useDrdy(false),
+      externalReferenceActive(false),
       initialised(false),
       channelMask(0)
 {
@@ -112,12 +110,32 @@ bool StrainGaugeSensor::init()
     }
 
     if (!adc.writeRegister(ADS131M08::REG_MODE, MODE_CONFIG) ||
-        !adc.setOversampling(settings.osr) ||
-        !adc.setExternalReference(settings.externalReference))
+        !adc.setOversampling(settings.osr, settings.powerMode))
     {
         std::cerr << sensorID << ": failed to configure ADS131M08" << std::endl;
         return false;
     }
+
+    externalReferenceActive = false;
+
+    if (settings.externalReference)
+    {
+        if (!adc.setExternalReference(true, externalReferenceActive))
+        {
+            std::cerr << sensorID << ": failed to configure ADS131M08 reference" << std::endl;
+            return false;
+        }
+
+        if (!externalReferenceActive)
+        {
+            std::cerr
+                << sensorID
+                << ": warning: EXTREF_EN did not set, using the internal 1.2 V reference"
+                << std::endl;
+        }
+    }
+
+    vref = ADS131M08::effectiveReference(externalReferenceActive, settings.refinVolts);
 
     for (const StrainChannelConfig& config : channels)
     {
@@ -157,6 +175,7 @@ bool StrainGaugeSensor::init()
         << channels.size()
         << " strain channel(s)"
         << (useDrdy ? ", using DRDY" : ", polling STATUS")
+        << (externalReferenceActive ? ", external reference" : ", internal reference")
         << std::endl;
 
     return true;
@@ -254,6 +273,11 @@ bool StrainGaugeSensor::isInitialised() const
 bool StrainGaugeSensor::isUsingDrdy() const
 {
     return useDrdy;
+}
+
+bool StrainGaugeSensor::isUsingExternalReference() const
+{
+    return externalReferenceActive;
 }
 
 bool StrainGaugeSensor::acquire(

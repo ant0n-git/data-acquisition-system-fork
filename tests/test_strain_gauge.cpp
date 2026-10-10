@@ -56,6 +56,9 @@ public:
     int framesBetweenConversions = 0;
     int transfers = 0;
 
+    // False models silicon where CLOCK bit 6 is reserved (reads 0)
+    bool extrefSupported = true;
+
     FakeADS131M08()
     {
         powerOnReset();
@@ -133,6 +136,11 @@ public:
         {
             uint8_t address = (command >> 7) & 0x3F;
             uint16_t value = static_cast<uint16_t>((tx[3] << 8) | tx[4]);
+
+            if (address == ADS131M08::REG_CLOCK && !extrefSupported)
+            {
+                value = static_cast<uint16_t>(value & ~ADS131M08::CLOCK_EXTREF_EN);
+            }
 
             if (address != ADS131M08::REG_ID && address != ADS131M08::REG_STATUS)
             {
@@ -266,11 +274,19 @@ static void testDriverRegisters()
     check(adc.setChannelGain(5, 64), "set channel 5 gain");
     check(fake.gainOf(5) == 64 && fake.gainOf(4) == 1, "gain written to the right field of GAIN2");
 
-    check(adc.setOversampling(ADS131M08::OSR::OSR_4096), "set OSR");
-    check(fake.registers[ADS131M08::REG_CLOCK] == 0xFF16, "CLOCK register = 0xFF16 for OSR 4096");
+    check(adc.setOversampling(ADS131M08::OSR::OSR_4096, ADS131M08::PowerMode::LOW_POWER), "set OSR");
+    check(fake.registers[ADS131M08::REG_CLOCK] == 0xFF15, "CLOCK register = 0xFF15 for OSR 4096, low power");
+    check(adc.setOversampling(ADS131M08::OSR::OSR_4096, ADS131M08::PowerMode::HIGH_RESOLUTION)
+          && fake.registers[ADS131M08::REG_CLOCK] == 0xFF16, "CLOCK register = 0xFF16 for OSR 4096, high resolution");
 
-    check(adc.setExternalReference(true) && fake.registers[ADS131M08::REG_CLOCK] == 0xFF56, "EXTREF_EN set in CLOCK");
-    check(adc.setOversampling(ADS131M08::OSR::OSR_1024) && fake.registers[ADS131M08::REG_CLOCK] == 0xFF4E, "changing OSR keeps EXTREF_EN");
+    bool applied = false;
+
+    check(adc.setExternalReference(true, applied) && applied && fake.registers[ADS131M08::REG_CLOCK] == 0xFF56, "EXTREF_EN set in CLOCK");
+    check(adc.setOversampling(ADS131M08::OSR::OSR_1024, ADS131M08::PowerMode::HIGH_RESOLUTION)
+          && fake.registers[ADS131M08::REG_CLOCK] == 0xFF4E, "changing OSR keeps EXTREF_EN");
+
+    fake.extrefSupported = false;
+    check(adc.setExternalReference(true, applied) && !applied, "EXTREF_EN read-back detects a reserved bit");
     check(adc.setGlobalChop(true) && fake.registers[ADS131M08::REG_CFG] == 0x0700, "global chop sets GC_EN");
 }
 
@@ -296,6 +312,8 @@ static void testStrainSensor()
     check(!sensor.read(), "read fails before init");
     check(sensor.init(), "sensor init");
     check(fake.registers[ADS131M08::REG_CLOCK] & ADS131M08::CLOCK_EXTREF_EN, "external reference enabled by default");
+    check(sensor.isUsingExternalReference(), "sensor reports external reference");
+    check((fake.registers[ADS131M08::REG_CLOCK] & 0x3) == 1, "low-power mode by default (4.096 MHz CLKIN)");
     check(fake.gainOf(0) == 32 && fake.gainOf(3) == 128, "per-channel gains applied");
 
     // Bridge imbalance at no load
@@ -402,6 +420,28 @@ static void testDrdyUnavailable()
     check(sensor.read(), "read by polling after fallback");
 }
 
+static void testExternalReferenceUnsupported()
+{
+    FakeADS131M08 fake;
+    fake.extrefSupported = false;
+
+    StrainChannelConfig config;
+    config.name = "gauge";
+
+    StrainGaugeSensor sensor("strain_intref", fake, {config});
+
+    check(sensor.init() && !sensor.isUsingExternalReference(), "falls back to internal reference");
+    check(sensor.tare(20), "tare with internal reference");
+
+    fake.inputVolts[0] = 400e-6 * 2.0 * 2.5;
+
+    check(sensor.read(), "read with internal reference");
+    check(
+        near(sensor.getLastReading().values.at("gauge_microstrain"), 400.0, 0.5),
+        "internal reference reading = 400 microstrain"
+    );
+}
+
 static void testMissingDevice()
 {
     FakeADS131M08 fake;
@@ -456,6 +496,7 @@ int main()
     testRatiometric();
     testDrdy();
     testDrdyUnavailable();
+    testExternalReferenceUnsupported();
     testMissingDevice();
     testNoConversions();
     testBadConfig();

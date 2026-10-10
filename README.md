@@ -673,9 +673,10 @@ OSR     Data rate at 4.096 MHz
 8192     250 SPS
 16256    126 SPS
 ```
-With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
+The datasheet specifies low-power mode (CLOCK PWR = 01) at a 4.096 MHz CLKIN, so that is the default (`StrainGaugeADCSettings::powerMode`). With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
 Voltage reference
-AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
+AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN (CLOCK bit 6) to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
+EXTREF_EN comes from TI forum answers; some datasheet register maps show CLOCK bits 7:5 as reserved. The driver therefore reads CLOCK back. If the bit did not set, it prints `warning: EXTREF_EN did not set, using the internal 1.2 V reference`. Readings are still correct in that case, but no longer ratiometric. The startup line says which reference is in use.
 The bridges are excited from the same 2.5 V rail, so the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected.
 Wiring to the Pi (via the VCU HAT)
 The strain gauge board's J3 connects to J8 on the VCU HAT, which sits on the Pi's GPIO header. The HAT passes SCLK, MOSI, MISO and the chip selects through an ISO7761 digital isolator. The cable must be wired pin 1 to pin 1.

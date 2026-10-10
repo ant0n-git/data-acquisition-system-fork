@@ -128,7 +128,7 @@ bool ADS131M08::setChannelGain(int channel, uint8_t gain)
     return writeRegister(address, value);
 }
 
-bool ADS131M08::setOversampling(OSR osr)
+bool ADS131M08::setOversampling(OSR osr, PowerMode power)
 {
     uint16_t value = 0;
 
@@ -137,18 +137,22 @@ bool ADS131M08::setOversampling(OSR osr)
         return false;
     }
 
-    // CH7_EN..CH0_EN = 1, OSR in bits 4:2, PWR = 0b10 (high resolution).
-    // High-resolution mode also works with CLKIN below 8.192 MHz.
-    // Bits 7:5 (XTAL_DIS, EXTREF_EN, TBM) are kept.
+    // CH7_EN..CH0_EN = 1, OSR in bits 4:2, PWR in bits 1:0.
+    // Bits 7:5 are kept.
     value = static_cast<uint16_t>(
-        (value & 0x00E0) | 0xFF00 | (static_cast<uint8_t>(osr) << 2) | 0x2
+        (value & 0x00E0)
+        | 0xFF00
+        | ((static_cast<uint8_t>(osr) & 0x7) << 2)
+        | (static_cast<uint8_t>(power) & 0x3)
     );
 
     return writeRegister(REG_CLOCK, value);
 }
 
-bool ADS131M08::setExternalReference(bool enabled)
+bool ADS131M08::setExternalReference(bool enabled, bool& applied)
 {
+    applied = false;
+
     uint16_t value = 0;
 
     if (!readRegister(REG_CLOCK, value))
@@ -165,7 +169,21 @@ bool ADS131M08::setExternalReference(bool enabled)
         value = static_cast<uint16_t>(value & ~CLOCK_EXTREF_EN);
     }
 
-    return writeRegister(REG_CLOCK, value);
+    if (!writeRegister(REG_CLOCK, value))
+    {
+        return false;
+    }
+
+    uint16_t readBack = 0;
+
+    if (!readRegister(REG_CLOCK, readBack))
+    {
+        return false;
+    }
+
+    applied = ((readBack & CLOCK_EXTREF_EN) != 0) == enabled;
+
+    return true;
 }
 
 bool ADS131M08::setGlobalChop(bool enabled)

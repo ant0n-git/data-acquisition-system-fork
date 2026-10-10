@@ -67,6 +67,16 @@ public:
         OSR_16256 = 7
     };
 
+    // Modulator bias setting (CLOCK PWR bits). The datasheet specifies
+    // each mode at its own CLKIN: high resolution at 8.192 MHz,
+    // low power at 4.096 MHz and very low power at 2.048 MHz.
+    enum class PowerMode : uint8_t
+    {
+        VERY_LOW_POWER = 0,
+        LOW_POWER = 1,
+        HIGH_RESOLUTION = 2
+    };
+
     struct Frame
     {
         // Response word. For a NULL command this is the STATUS register.
@@ -89,12 +99,16 @@ public:
     // gain must be a power of two between 1 and 128.
     bool setChannelGain(int channel, uint8_t gain);
 
-    // Enables all channels, sets the OSR and selects high-resolution mode.
-    bool setOversampling(OSR osr);
+    // Enables all channels and sets the OSR and power mode.
+    bool setOversampling(OSR osr, PowerMode power);
 
     // Selects the voltage on REFIN (EXTREF_EN) instead of the internal
     // reference. With the internal reference, REFIN is driven by the device.
-    bool setExternalReference(bool enabled);
+    //
+    // EXTREF_EN (CLOCK bit 6) is documented in TI's forum answers but is
+    // shown as RESERVED in some datasheet register maps, so the register
+    // is read back: `applied` reports whether the bit actually changed.
+    bool setExternalReference(bool enabled, bool& applied);
 
     // Global-chop mode removes most of the PGA offset and offset drift,
     // at the cost of a lower effective data rate.
