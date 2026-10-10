@@ -675,22 +675,25 @@ With the default 8 samples per reading, each `read()` takes about 16 ms. The SYN
 Voltage reference
 AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
 The bridges are excited from the same 2.5 V rail, so the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected.
-Board connector (J3)
+Wiring to the Pi (via the VCU HAT)
+The strain gauge board's J3 connects to J8 on the VCU HAT, which sits on the Pi's GPIO header. The HAT passes SCLK, MOSI, MISO and the chip selects through an ISO7761 digital isolator. The cable must be wired pin 1 to pin 1.
 ```text
-J3 pin   Signal         Raspberry Pi 5 header
-1        3.3 V          pin 1 or 17
-2        GND            any GND
-3        SCLK           pin 23 (GPIO 11)
-4        DIN  (MOSI)    pin 19 (GPIO 10)
-5        DOUT (MISO)    pin 21 (GPIO 9)
-6        CS             pin 24 (GPIO 8, CE0)  -> /dev/spidev0.0
-                        or pin 26 (GPIO 7, CE1) -> /dev/spidev0.1
-7        DRDY           not used by the software yet
-8        GND            any GND
+ADC board J3   HAT J8      Path on the HAT              Pi 5 header
+1  3.3 V       1  3V3      HAT 3V3 rail                 -
+2  GND         2  GND      GND                          GND
+3  SCLK        3  ISO-SCLK ISO7761 OUTC <- INC          pin 23 (GPIO 11)
+4  DIN         4  ISO-MOSI ISO7761 OUTD <- IND          pin 19 (GPIO 10)
+5  DOUT        5  ISO-MISO ISO7761 INF  -> OUTF         pin 21 (GPIO 9)
+6  CS          6  ISO-CE0  ISO7761 OUTB <- INB          pin 24 (GPIO 8, CE0) -> /dev/spidev0.0
+7  DRDY        7  ISO-INT0 (not through the isolator)   pin 18 (GPIO 24)
+8  GND         8  GND      GND                          GND
 ```
+ISO-CE0 has a 10k pull-up (R20), so the ADC stays deselected while the Pi is booting. HAT connector J9 is the same but uses CE1 (`/dev/spidev0.1`) and INT1 on pin 22 (GPIO 25), for a second SPI board.
+DRDY reaches GPIO 24 but is not used by the software yet; the driver polls the STATUS register instead.
+The isolator adds a delay to each signal, and MISO pays it twice: the clock goes out through the isolator and the data comes back through it. This has no effect at the default 1 MHz SCLK, but keep it in mind before raising `spiSpeedHz` far.
 SYNC/RESET is pulled up to 3.3 V on the board through R19.
 Raspberry Pi 5 setup
-Enable SPI with `sudo raspi-config` → Interface Options → SPI, or add `dtparam=spi=on` to `/boot/firmware/config.txt`, then reboot. Check that `/dev/spidev0.0` exists (`ls /dev/spidev*`). This is SPI0 with chip select CE0 (GPIO 8, header pin 24). If the ADC's CS is wired to CE1 (GPIO 7, pin 26), change `spiDevicePath` in `SystemConfig` to `/dev/spidev0.1`. Other SPI0 pins: SCLK GPIO 11 (pin 23), MOSI GPIO 10 (pin 19), MISO GPIO 9 (pin 21). The Pi 5's GPIO uses 3.3 V logic.
+Enable SPI with `sudo raspi-config` → Interface Options → SPI, or add `dtparam=spi=on` to `/boot/firmware/config.txt`, then reboot. Check that `/dev/spidev0.0` exists (`ls /dev/spidev*`). This is SPI0 with chip select CE0, which the HAT routes to J8. If the strain gauge board is moved to J9 (CE1), change `spiDevicePath` in `SystemConfig` to `/dev/spidev0.1`.
 Channel configuration
 Each bridge is described by a `StrainChannelConfig`:
 ```cpp
