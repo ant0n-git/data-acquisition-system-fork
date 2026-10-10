@@ -110,7 +110,8 @@ bool StrainGaugeSensor::init()
     }
 
     if (!adc.writeRegister(ADS131M08::REG_MODE, MODE_CONFIG) ||
-        !adc.setOversampling(settings.osr, settings.powerMode))
+        !adc.setOversampling(settings.osr, settings.powerMode) ||
+        !adc.setCrystalOscillator(false))
     {
         std::cerr << sensorID << ": failed to configure ADS131M08" << std::endl;
         return false;
@@ -306,6 +307,20 @@ bool StrainGaugeSensor::acquire(
     if (useDrdy)
     {
         drdy->discardEdges();
+    }
+
+    // The ADC buffers two samples per channel. After a gap in reading,
+    // both are full and old, so read two frames to empty the buffer
+    // (datasheet 8.5.1.9.1). This comes after discarding edges, so a
+    // conversion completing in between still produces an edge to wait for.
+    for (int i = 0; i < 2; ++i)
+    {
+        ADS131M08::Frame stale;
+
+        if (!adc.readFrame(stale))
+        {
+            return false;
+        }
     }
 
     while (collected < samples && std::chrono::steady_clock::now() < deadline)

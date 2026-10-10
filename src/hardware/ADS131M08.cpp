@@ -186,6 +186,27 @@ bool ADS131M08::setExternalReference(bool enabled, bool& applied)
     return true;
 }
 
+bool ADS131M08::setCrystalOscillator(bool enabled)
+{
+    uint16_t value = 0;
+
+    if (!readRegister(REG_CLOCK, value))
+    {
+        return false;
+    }
+
+    if (enabled)
+    {
+        value = static_cast<uint16_t>(value & ~CLOCK_XTAL_DIS);
+    }
+    else
+    {
+        value = static_cast<uint16_t>(value | CLOCK_XTAL_DIS);
+    }
+
+    return writeRegister(REG_CLOCK, value);
+}
+
 bool ADS131M08::setGlobalChop(bool enabled)
 {
     uint16_t value = 0;

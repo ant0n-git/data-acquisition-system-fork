@@ -314,6 +314,7 @@ static void testStrainSensor()
     check(fake.registers[ADS131M08::REG_CLOCK] & ADS131M08::CLOCK_EXTREF_EN, "external reference enabled by default");
     check(sensor.isUsingExternalReference(), "sensor reports external reference");
     check((fake.registers[ADS131M08::REG_CLOCK] & 0x3) == 1, "low-power mode by default (4.096 MHz CLKIN)");
+    check(fake.registers[ADS131M08::REG_CLOCK] & ADS131M08::CLOCK_XTAL_DIS, "crystal oscillator disabled (external CLKIN)");
     check(fake.gainOf(0) == 32 && fake.gainOf(3) == 128, "per-channel gains applied");
 
     // Bridge imbalance at no load
@@ -392,7 +393,7 @@ static void testDrdy()
     int edgesBefore = drdy.edges;
 
     check(sensor.read(), "read using DRDY");
-    check(fake.transfers - transfersBefore == 8, "one SPI frame per sample with DRDY (8 samples)");
+    check(fake.transfers - transfersBefore == 2 + 8, "2 flush frames, then one SPI frame per sample with DRDY (8 samples)");
     check(drdy.edges - edgesBefore == 8, "one DRDY edge per sample");
     check(
         near(sensor.getLastReading().values.at("gauge_microstrain"), 300.0, 0.5),

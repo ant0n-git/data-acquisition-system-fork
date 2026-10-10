@@ -51,6 +51,7 @@ public:
     static constexpr uint8_t REG_CFG = 0x06;
 
     // CLOCK register bits
+    static constexpr uint16_t CLOCK_XTAL_DIS = 0x0080;
     static constexpr uint16_t CLOCK_EXTREF_EN = 0x0040;
 
     // Oversampling ratio. Output data rate = (CLKIN / 2) / OSR,
@@ -102,13 +103,16 @@ public:
     // Enables all channels and sets the OSR and power mode.
     bool setOversampling(OSR osr, PowerMode power);
 
-    // Selects the voltage on REFIN (EXTREF_EN) instead of the internal
-    // reference. With the internal reference, REFIN is driven by the device.
-    //
-    // EXTREF_EN (CLOCK bit 6) is documented in TI's forum answers but is
-    // shown as RESERVED in some datasheet register maps, so the register
-    // is read back: `applied` reports whether the bit actually changed.
+    // Selects the voltage on REFIN (EXTREF_EN, CLOCK bit 6) instead of the
+    // internal reference. The summary register map (Table 8-12) shows this
+    // bit as reserved while the CLOCK register description (Table 8-17)
+    // defines it, so the register is read back: `applied` reports whether
+    // the bit actually changed.
     bool setExternalReference(bool enabled, bool& applied);
+
+    // Turns the crystal oscillator circuit off (XTAL_DIS). Do this when
+    // CLKIN is driven by an external clock.
+    bool setCrystalOscillator(bool enabled);
 
     // Global-chop mode removes most of the PGA offset and offset drift,
     // at the cost of a lower effective data rate.
