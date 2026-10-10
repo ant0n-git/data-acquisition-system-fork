@@ -27,7 +27,8 @@ StrainGaugeSensor::StrainGaugeSensor(
     std::string id,
     SPIBus& sharedBus,
     std::vector<StrainChannelConfig> channels,
-    StrainGaugeADCSettings settings)
+    StrainGaugeADCSettings settings,
+    GPIOInput* drdy)
     : SPISensor(id, sharedBus),
       adc(sharedBus),
       channels(std::move(channels)),
@@ -36,6 +37,8 @@ StrainGaugeSensor::StrainGaugeSensor(
           settings.externalReference,
           settings.refinVolts
       )),
+      drdy(drdy),
+      useDrdy(false),
       initialised(false),
       channelMask(0)
 {
@@ -65,6 +68,21 @@ bool StrainGaugeSensor::init()
     if (!bus.isOpen() && !bus.openBus())
     {
         return false;
+    }
+
+    useDrdy = false;
+
+    if (drdy != nullptr)
+    {
+        useDrdy = drdy->isOpen() || drdy->openLine();
+
+        if (!useDrdy)
+        {
+            std::cerr
+                << sensorID
+                << ": warning: DRDY pin unavailable, polling STATUS instead"
+                << std::endl;
+        }
     }
 
     if (!adc.reset())
@@ -138,6 +156,7 @@ bool StrainGaugeSensor::init()
         << ": ADS131M08 initialised with "
         << channels.size()
         << " strain channel(s)"
+        << (useDrdy ? ", using DRDY" : ", polling STATUS")
         << std::endl;
 
     return true;
@@ -232,6 +251,11 @@ bool StrainGaugeSensor::isInitialised() const
     return initialised;
 }
 
+bool StrainGaugeSensor::isUsingDrdy() const
+{
+    return useDrdy;
+}
+
 bool StrainGaugeSensor::acquire(
     int samples,
     std::array<double, ADS131M08::NUM_CHANNELS>& averageVolts,
@@ -243,8 +267,8 @@ bool StrainGaugeSensor::acquire(
     int collected = 0;
     int crcErrors = 0;
 
-    // Without a DRDY interrupt the STATUS register is polled. Allow twice
-    // the expected conversion time, plus margin for scheduling delays.
+    // Allow twice the expected conversion time, plus margin for
+    // scheduling delays.
     double samplePeriodMs = 1000.0 / ADS131M08::dataRateHz(settings.clockHz, settings.osr);
 
     auto deadline =
@@ -253,8 +277,38 @@ bool StrainGaugeSensor::acquire(
             static_cast<int>(samples * samplePeriodMs * 2.0) + 50
         );
 
+    // Edges from conversions since the last read are stale. Wait for the
+    // next conversion instead.
+    if (useDrdy)
+    {
+        drdy->discardEdges();
+    }
+
     while (collected < samples && std::chrono::steady_clock::now() < deadline)
     {
+        if (useDrdy)
+        {
+            auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()
+                ).count();
+
+            int edge = drdy->waitForFallingEdge(
+                static_cast<int>(remaining > 0 ? remaining : 0) + 1
+            );
+
+            if (edge < 0)
+            {
+                std::cerr << sensorID << ": error waiting for DRDY" << std::endl;
+                return false;
+            }
+
+            if (edge == 0)
+            {
+                break;
+            }
+        }
+
         ADS131M08::Frame frame;
 
         if (!adc.readFrame(frame))
@@ -273,10 +327,15 @@ bool StrainGaugeSensor::acquire(
             continue;
         }
 
-        // STATUS bits 7:0 are DRDY7..DRDY0
+        // STATUS bits 7:0 are DRDY7..DRDY0. With the DRDY pin these are
+        // already set; this also skips a DRDY glitch.
         if ((frame.response & channelMask) != channelMask)
         {
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            if (!useDrdy)
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+
             continue;
         }
 
@@ -299,7 +358,8 @@ bool StrainGaugeSensor::acquire(
     {
         std::cerr
             << sensorID
-            << ": timed out waiting for ADS131M08 data (check CLKIN)"
+            << ": timed out waiting for ADS131M08 data (check CLKIN"
+            << (useDrdy ? " and the DRDY wiring)" : ")")
             << std::endl;
 
         return false;

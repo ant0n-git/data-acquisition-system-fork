@@ -652,13 +652,15 @@ Files
 ```text
 src/hardware/ADS131M08.h
 src/hardware/ADS131M08.cpp
+src/hardware/GPIOInput.h
+src/hardware/GPIOInput.cpp
 src/sensors/SPISensor.h
 src/sensors/SPISensor.cpp
 src/sensors/analog/StrainGaugeSensor.h
 src/sensors/analog/StrainGaugeSensor.cpp
 tests/test_strain_gauge.cpp
 ```
-`ADS131M08` is the chip driver: frame building, RESET/RREG/WREG/NULL commands, PGA gain, oversampling ratio, global chop and output CRC checking. `StrainGaugeSensor` turns bridge voltages into strain.
+`ADS131M08` is the chip driver: frame building, RESET/RREG/WREG/NULL commands, PGA gain, oversampling ratio, global chop and output CRC checking. `StrainGaugeSensor` turns bridge voltages into strain. `GPIOInput` watches the ADC's DRDY pin for falling edges using the Linux GPIO character device (`/dev/gpiochipN`), so no extra library is needed.
 SPI settings
 The ADS131M08 uses SPI mode 1 (CPOL = 0, CPHA = 1), not the `SPIBus` default of mode 0. `VCUController` opens `/dev/spidev0.0` at 1 MHz in mode 1 (see `SystemConfig`). Frames are 10 words of 24 bits (30 bytes): a response word, eight channel words and a CRC word.
 Hardware requirements
@@ -671,7 +673,7 @@ OSR     Data rate at 4.096 MHz
 8192     250 SPS
 16256    126 SPS
 ```
-With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
+With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
 Voltage reference
 AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
 The bridges are excited from the same 2.5 V rail, so the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected.
@@ -689,7 +691,9 @@ ADC board J3   HAT J8      Path on the HAT              Pi 5 header
 8  GND         8  GND      GND                          GND
 ```
 ISO-CE0 has a 10k pull-up (R20), so the ADC stays deselected while the Pi is booting. HAT connector J9 is the same but uses CE1 (`/dev/spidev0.1`) and INT1 on pin 22 (GPIO 25), for a second SPI board.
-DRDY reaches GPIO 24 but is not used by the software yet; the driver polls the STATUS register instead.
+DRDY
+The ADC pulls DRDY low when a new conversion is ready. Before each `read()` the sensor drops stale DRDY edges, then for each sample waits for a falling edge on GPIO 24 and reads one SPI frame. The GPIO is found by its chip label (`pinctrl-rp1` on the Pi 5) rather than a fixed `/dev/gpiochipN` path, because the number differs between kernel versions. Both the label and the line are set in `SystemConfig`.
+If the GPIO cannot be opened, the sensor prints `warning: DRDY pin unavailable, polling STATUS instead` and keeps working by polling the STATUS register over SPI. The user running `./vcu` must be in the `gpio` group (and the `spi` group for `/dev/spidev0.0`), which the default Pi OS user already is. To check the pin from the shell, run `gpioinfo | grep -A30 pinctrl-rp1` (from the `gpiod` package) and look for line 24.
 The isolator adds a delay to each signal, and MISO pays it twice: the clock goes out through the isolator and the data comes back through it. This has no effect at the default 1 MHz SCLK, but keep it in mind before raising `spiSpeedHz` far.
 SYNC/RESET is pulled up to 3.3 V on the board through R19.
 Raspberry Pi 5 setup
@@ -700,7 +704,7 @@ Each bridge is described by a `StrainChannelConfig`:
 StrainChannelConfig bridge0;
 bridge0.name = "strain_0";        // telemetry key prefix
 bridge0.channel = 0;              // AIN0P / AIN0N
-bridge0.gaugeFactor = 2.0f;       // from the gauge datasheet
+bridge0.gaugeFactor = 2.1f;       // value on the gauge packet (spec 2.0-2.2)
 bridge0.bridgeFactor = 1.0f;      // 1.0 for 4 active gauges
 bridge0.excitationVoltage = 2.5f; // bridge excitation (2.5 V rail)
 bridge0.pgaGain = 32;             // input range +/- 1.2 V / gain
@@ -731,7 +735,7 @@ Settings shared by all channels (oversampling, samples per reading, global chop,
 Strain gauge test
 `tests/test_strain_gauge.cpp` checks the driver and strain maths against a simulated ADS131M08, so it runs on any Linux machine without hardware:
 ```bash
-g++ -std=c++17 tests/test_strain_gauge.cpp src/hardware/SPIBus.cpp src/hardware/ADS131M08.cpp src/sensors/SPISensor.cpp src/sensors/analog/StrainGaugeSensor.cpp -Isrc -Isrc/hardware -Isrc/sensors -Isrc/sensors/analog -o test_strain_gauge
+g++ -std=c++17 tests/test_strain_gauge.cpp src/hardware/SPIBus.cpp src/hardware/GPIOInput.cpp src/hardware/ADS131M08.cpp src/sensors/SPISensor.cpp src/sensors/analog/StrainGaugeSensor.cpp -Isrc -Isrc/hardware -Isrc/sensors -Isrc/sensors/analog -o test_strain_gauge
 ./test_strain_gauge
 ```
 Test status: the strain gauge code passes the simulated-device test but has not yet been run against a real ADS131M08.
@@ -875,7 +879,7 @@ Building the VCU
 From the repository root:
 ```bash
 
-g++ -std=c++17 src/main.cpp src/core/VCUController.cpp src/core/SensorManager.cpp src/config/SystemConfig.cpp src/communication/CommunicationManager.cpp src/data/DataSerialiser.cpp src/data/SensorReading.cpp src/hardware/I2CBus.cpp src/hardware/SPIBus.cpp src/hardware/ADS131M08.cpp src/sensors/I2CSensor.cpp src/sensors/SPISensor.cpp src/sensors/GyroscopeSensor.cpp src/sensors/analog/StrainGaugeSensor.cpp src/sensors/Camera.cpp -I. -Isrc -Isrc/core -Isrc/config -Isrc/communication -Isrc/data -Isrc/hardware -Isrc/sensors -Isrc/sensors/i2c -Isrc/sensors/analog -Isrc/util -pthread -o vcu
+g++ -std=c++17 src/main.cpp src/core/VCUController.cpp src/core/SensorManager.cpp src/config/SystemConfig.cpp src/communication/CommunicationManager.cpp src/data/DataSerialiser.cpp src/data/SensorReading.cpp src/hardware/I2CBus.cpp src/hardware/SPIBus.cpp src/hardware/GPIOInput.cpp src/hardware/ADS131M08.cpp src/sensors/I2CSensor.cpp src/sensors/SPISensor.cpp src/sensors/GyroscopeSensor.cpp src/sensors/analog/StrainGaugeSensor.cpp src/sensors/Camera.cpp -I. -Isrc -Isrc/core -Isrc/config -Isrc/communication -Isrc/data -Isrc/hardware -Isrc/sensors -Isrc/sensors/i2c -Isrc/sensors/analog -Isrc/util -pthread -o vcu
 
 ```
 Run with:

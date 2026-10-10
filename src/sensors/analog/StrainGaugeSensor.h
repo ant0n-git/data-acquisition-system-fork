@@ -2,6 +2,7 @@
 
 #include "SPISensor.h"
 #include "ADS131M08.h"
+#include "GPIOInput.h"
 
 #include <array>
 #include <cstdint>
@@ -60,13 +61,18 @@ struct StrainGaugeADCSettings
 
 // Strain gauge sensor that reads full Wheatstone bridges through an
 // ADS131M08 ADC over SPI.
+//
+// If a DRDY input is given, each sample is read when the ADC's DRDY pin
+// falls. Otherwise (or if the pin cannot be opened) the STATUS register
+// is polled instead.
 class StrainGaugeSensor : public SPISensor {
 public:
     StrainGaugeSensor(
         std::string id,
         SPIBus& sharedBus,
         std::vector<StrainChannelConfig> channels,
-        StrainGaugeADCSettings settings = StrainGaugeADCSettings()
+        StrainGaugeADCSettings settings = StrainGaugeADCSettings(),
+        GPIOInput* drdy = nullptr
     );
 
     ~StrainGaugeSensor() override = default;
@@ -80,6 +86,8 @@ public:
 
     bool isInitialised() const;
 
+    bool isUsingDrdy() const;
+
 private:
     ADS131M08 adc;
     std::vector<StrainChannelConfig> channels;
@@ -87,6 +95,10 @@ private:
 
     // Conversion reference voltage, from the settings
     float vref;
+
+    // ADC DRDY pin, owned by the caller. May be null.
+    GPIOInput* drdy;
+    bool useDrdy;
 
     bool initialised;
 

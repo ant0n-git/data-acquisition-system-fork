@@ -4,7 +4,7 @@
 // SPIBus with a simulated ADS131M08 that follows the datasheet framing.
 //
 // Build from the repository root:
-//   g++ -std=c++17 tests/test_strain_gauge.cpp src/hardware/SPIBus.cpp src/hardware/ADS131M08.cpp src/sensors/SPISensor.cpp src/sensors/analog/StrainGaugeSensor.cpp -Isrc -Isrc/hardware -Isrc/sensors -Isrc/sensors/analog -o test_strain_gauge
+//   g++ -std=c++17 tests/test_strain_gauge.cpp src/hardware/SPIBus.cpp src/hardware/GPIOInput.cpp src/hardware/ADS131M08.cpp src/sensors/SPISensor.cpp src/sensors/analog/StrainGaugeSensor.cpp -Isrc -Isrc/hardware -Isrc/sensors -Isrc/sensors/analog -o test_strain_gauge
 
 #include "ADS131M08.h"
 #include "StrainGaugeSensor.h"
@@ -54,6 +54,7 @@ public:
     bool corruptNextCrc = false;
     bool present = true;
     int framesBetweenConversions = 0;
+    int transfers = 0;
 
     FakeADS131M08()
     {
@@ -68,6 +69,7 @@ public:
         std::vector<uint8_t>& rx) override
     {
         rx.assign(tx.size(), present ? 0x00 : 0xFF);
+        transfers++;
 
         if (!present)
         {
@@ -143,6 +145,12 @@ public:
         return true;
     }
 
+    // A conversion completes now (DRDY falls)
+    void convertNow()
+    {
+        framesUntilConversion = 0;
+    }
+
     uint8_t gainOf(int channel) const
     {
         uint16_t reg = registers[channel < 4 ? 4 : 5];
@@ -192,6 +200,36 @@ private:
         rx[word * 3 + 1] = static_cast<uint8_t>(raw >> 8);
         rx[word * 3 + 2] = static_cast<uint8_t>(raw);
     }
+};
+
+// Simulated DRDY pin wired to a FakeADS131M08
+class FakeDrdy : public GPIOInput
+{
+public:
+    explicit FakeDrdy(FakeADS131M08& adc) : adc(adc) {}
+
+    bool available = true;
+    bool stuck = false;
+    int edges = 0;
+
+    bool openLine() override { return available; }
+    bool isOpen() const override { return false; }
+    void discardEdges() override {}
+
+    int waitForFallingEdge(int) override
+    {
+        if (stuck)
+        {
+            return 0;
+        }
+
+        edges++;
+        adc.convertNow();
+        return 1;
+    }
+
+private:
+    FakeADS131M08& adc;
 };
 
 static void testCrc()
@@ -314,6 +352,56 @@ static void testRatiometric()
     );
 }
 
+static void testDrdy()
+{
+    FakeADS131M08 fake;
+
+    // Conversions only happen when the DRDY pin fires
+    fake.framesBetweenConversions = 1000000;
+
+    FakeDrdy drdy(fake);
+
+    StrainChannelConfig config;
+    config.name = "gauge";
+
+    StrainGaugeSensor sensor("strain_drdy", fake, {config}, StrainGaugeADCSettings(), &drdy);
+
+    check(sensor.init() && sensor.isUsingDrdy(), "init with DRDY pin");
+
+    fake.inputVolts[0] = 300e-6 * 2.0 * 2.5;
+
+    int transfersBefore = fake.transfers;
+    int edgesBefore = drdy.edges;
+
+    check(sensor.read(), "read using DRDY");
+    check(fake.transfers - transfersBefore == 8, "one SPI frame per sample with DRDY (8 samples)");
+    check(drdy.edges - edgesBefore == 8, "one DRDY edge per sample");
+    check(
+        near(sensor.getLastReading().values.at("gauge_microstrain"), 300.0, 0.5),
+        "DRDY reading = 300 microstrain"
+    );
+
+    drdy.stuck = true;
+    check(!sensor.read() && !sensor.getLastReading().isValid, "read fails if DRDY never falls");
+}
+
+static void testDrdyUnavailable()
+{
+    FakeADS131M08 fake;
+    fake.framesBetweenConversions = 2;
+
+    FakeDrdy drdy(fake);
+    drdy.available = false;
+
+    StrainChannelConfig config;
+    config.name = "gauge";
+
+    StrainGaugeSensor sensor("strain_nodrdy", fake, {config}, StrainGaugeADCSettings(), &drdy);
+
+    check(sensor.init() && !sensor.isUsingDrdy(), "falls back to polling if DRDY cannot be opened");
+    check(sensor.read(), "read by polling after fallback");
+}
+
 static void testMissingDevice()
 {
     FakeADS131M08 fake;
@@ -366,6 +454,8 @@ int main()
     testDriverRegisters();
     testStrainSensor();
     testRatiometric();
+    testDrdy();
+    testDrdyUnavailable();
     testMissingDevice();
     testNoConversions();
     testBadConfig();
