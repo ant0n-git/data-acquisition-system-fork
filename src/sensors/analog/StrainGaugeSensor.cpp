@@ -29,13 +29,15 @@ StrainGaugeSensor::StrainGaugeSensor(
     std::vector<StrainChannelConfig> channels,
     ADS131M08::OSR osr,
     int samplesPerReading,
-    bool globalChop)
+    bool globalChop,
+    uint32_t clockHz)
     : SPISensor(id, sharedBus),
       adc(sharedBus),
       channels(std::move(channels)),
       osr(osr),
       samplesPerReading(samplesPerReading),
       globalChop(globalChop),
+      clockHz(clockHz),
       initialised(false),
       channelMask(0)
 {
@@ -241,16 +243,19 @@ bool StrainGaugeSensor::acquire(
 
     int collected = 0;
     int crcErrors = 0;
-    int attempts = 0;
 
-    // Without a DRDY interrupt the STATUS register is polled. The limit
-    // allows for the slowest output rate at a typical 8.192 MHz CLKIN.
-    const int maxAttempts = samples * 200 + 200;
+    // Without a DRDY interrupt the STATUS register is polled. Allow twice
+    // the expected conversion time, plus margin for scheduling delays.
+    double samplePeriodMs = 1000.0 / ADS131M08::dataRateHz(clockHz, osr);
 
-    while (collected < samples && attempts < maxAttempts)
+    auto deadline =
+        std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(
+            static_cast<int>(samples * samplePeriodMs * 2.0) + 50
+        );
+
+    while (collected < samples && std::chrono::steady_clock::now() < deadline)
     {
-        attempts++;
-
         ADS131M08::Frame frame;
 
         if (!adc.readFrame(frame))
@@ -293,6 +298,11 @@ bool StrainGaugeSensor::acquire(
 
     if (collected < samples)
     {
+        std::cerr
+            << sensorID
+            << ": timed out waiting for ADS131M08 data (check CLKIN)"
+            << std::endl;
+
         return false;
     }
 
@@ -309,6 +319,12 @@ bool StrainGaugeSensor::validateConfig() const
     if (channels.empty())
     {
         std::cerr << sensorID << ": no strain channels configured" << std::endl;
+        return false;
+    }
+
+    if (clockHz == 0)
+    {
+        std::cerr << sensorID << ": clockHz must be set" << std::endl;
         return false;
     }
 

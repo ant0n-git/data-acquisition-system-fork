@@ -130,7 +130,8 @@ bool ADS131M08::setChannelGain(int channel, uint8_t gain)
 
 bool ADS131M08::setOversampling(OSR osr)
 {
-    // CH7_EN..CH0_EN = 1, OSR in bits 4:2, PWR = 0b10 (high resolution)
+    // CH7_EN..CH0_EN = 1, OSR in bits 4:2, PWR = 0b10 (high resolution).
+    // High-resolution mode also works with CLKIN below 8.192 MHz.
     uint16_t value = static_cast<uint16_t>(
         0xFF00 | (static_cast<uint8_t>(osr) << 2) | 0x2
     );
@@ -163,6 +164,16 @@ bool ADS131M08::setGlobalChop(bool enabled)
 bool ADS131M08::readFrame(Frame& frame)
 {
     return transferFrame(CMD_NULL, {}, &frame);
+}
+
+double ADS131M08::dataRateHz(uint32_t clkinHz, OSR osr)
+{
+    static constexpr uint32_t ratios[] = {
+        128, 256, 512, 1024, 2048, 4096, 8192, 16256
+    };
+
+    // The modulator runs at CLKIN / 2
+    return (clkinHz / 2.0) / ratios[static_cast<uint8_t>(osr) & 0x7];
 }
 
 float ADS131M08::codeToVolts(int32_t code, uint8_t gain)

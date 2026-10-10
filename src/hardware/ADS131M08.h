@@ -49,7 +49,7 @@ public:
     static constexpr uint8_t REG_CFG = 0x06;
 
     // Oversampling ratio. Output data rate = (CLKIN / 2) / OSR,
-    // e.g. 8.192 MHz CLKIN with OSR 4096 gives 1 kSPS.
+    // e.g. 4.096 MHz CLKIN with OSR 4096 gives 500 SPS.
     enum class OSR : uint8_t
     {
         OSR_128 = 0,
@@ -94,6 +94,9 @@ public:
     // Clocks out one full frame using the NULL command. frame.response
     // holds STATUS, provided the previous frame was also a NULL.
     bool readFrame(Frame& frame);
+
+    // Output data rate in samples per second for a given CLKIN frequency.
+    static double dataRateHz(uint32_t clkinHz, OSR osr);
 
     // Converts a raw code to the differential input voltage in volts.
     static float codeToVolts(int32_t code, uint8_t gain);

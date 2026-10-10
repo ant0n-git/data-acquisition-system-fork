@@ -45,8 +45,12 @@ public:
         std::vector<StrainChannelConfig> channels,
         ADS131M08::OSR osr = ADS131M08::OSR::OSR_4096,
         int samplesPerReading = 8,
-        bool globalChop = false
+        bool globalChop = false,
+        uint32_t clockHz = DEFAULT_CLOCK_HZ
     );
+
+    // CLKIN from the on-board SiT1602BC-21-25E-4.096000G oscillator
+    static constexpr uint32_t DEFAULT_CLOCK_HZ = 4096000;
 
     ~StrainGaugeSensor() override = default;
 
@@ -65,6 +69,7 @@ private:
     ADS131M08::OSR osr;
     int samplesPerReading;
     bool globalChop;
+    uint32_t clockHz;
 
     bool initialised;
 

@@ -204,6 +204,7 @@ static void testConversion()
 {
     check(near(ADS131M08::codeToVolts(0x7FFFFF, 1), 1.2, 1e-6), "full scale at gain 1 is 1.2 V");
     check(near(ADS131M08::codeToVolts(-0x800000, 32), -0.0375, 1e-7), "negative full scale at gain 32 is -37.5 mV");
+    check(near(ADS131M08::dataRateHz(4096000, ADS131M08::OSR::OSR_4096), 500.0, 1e-9), "4.096 MHz CLKIN at OSR 4096 gives 500 SPS");
     check(ADS131M08::isValidGain(128) && !ADS131M08::isValidGain(3) && !ADS131M08::isValidGain(0), "gain validation");
 }
 
@@ -291,6 +292,19 @@ static void testMissingDevice()
     check(!sensor.init(), "init fails when no device answers");
 }
 
+static void testNoConversions()
+{
+    FakeADS131M08 fake;
+    fake.framesBetweenConversions = 1000000;
+
+    StrainChannelConfig config;
+    config.name = "gauge";
+
+    StrainGaugeSensor sensor("strain_noclock", fake, {config});
+
+    check(!sensor.init(), "init times out when no conversions arrive (no CLKIN)");
+}
+
 static void testBadConfig()
 {
     FakeADS131M08 fake;
@@ -317,6 +331,7 @@ int main()
     testDriverRegisters();
     testStrainSensor();
     testMissingDevice();
+    testNoConversions();
     testBadConfig();
 
     if (failures > 0)

@@ -662,7 +662,18 @@ tests/test_strain_gauge.cpp
 SPI settings
 The ADS131M08 uses SPI mode 1 (CPOL = 0, CPHA = 1), not the `SPIBus` default of mode 0. `VCUController` opens `/dev/spidev0.0` at 1 MHz in mode 1 (see `SystemConfig`). Frames are 10 words of 24 bits (30 bytes): a response word, eight channel words and a CRC word.
 Hardware requirements
-The ADS131M08 needs a clock on CLKIN (normally 8.192 MHz) and its SYNC/RESET pin held high. The output data rate is (CLKIN / 2) / OSR, so with the default OSR of 4096 it runs at 1 kSPS. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead.
+CLKIN is driven by the on-board SiT1602BC-21-25E-4.096000G oscillator (4.096 MHz, 2.5 V). This frequency is set by `StrainGaugeSensor::DEFAULT_CLOCK_HZ`, so change it there if the oscillator changes. The output data rate is (CLKIN / 2) / OSR:
+```text
+OSR     Data rate at 4.096 MHz
+1024    2000 SPS
+2048    1000 SPS
+4096     500 SPS   (default)
+8192     250 SPS
+16256    126 SPS
+```
+With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
+Raspberry Pi 5 setup
+Enable SPI with `sudo raspi-config` → Interface Options → SPI, or add `dtparam=spi=on` to `/boot/firmware/config.txt`, then reboot. Check that `/dev/spidev0.0` exists (`ls /dev/spidev*`). This is SPI0 with chip select CE0 (GPIO 8, header pin 24). If the ADC's CS is wired to CE1 (GPIO 7, pin 26), change `spiDevicePath` in `SystemConfig` to `/dev/spidev0.1`. Other SPI0 pins: SCLK GPIO 11 (pin 23), MOSI GPIO 10 (pin 19), MISO GPIO 9 (pin 21). The Pi 5's GPIO uses 3.3 V logic.
 Channel configuration
 Each bridge is described by a `StrainChannelConfig`:
 ```cpp
