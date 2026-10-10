@@ -27,17 +27,15 @@ StrainGaugeSensor::StrainGaugeSensor(
     std::string id,
     SPIBus& sharedBus,
     std::vector<StrainChannelConfig> channels,
-    ADS131M08::OSR osr,
-    int samplesPerReading,
-    bool globalChop,
-    uint32_t clockHz)
+    StrainGaugeADCSettings settings)
     : SPISensor(id, sharedBus),
       adc(sharedBus),
       channels(std::move(channels)),
-      osr(osr),
-      samplesPerReading(samplesPerReading),
-      globalChop(globalChop),
-      clockHz(clockHz),
+      settings(settings),
+      vref(ADS131M08::effectiveReference(
+          settings.externalReference,
+          settings.refinVolts
+      )),
       initialised(false),
       channelMask(0)
 {
@@ -96,7 +94,8 @@ bool StrainGaugeSensor::init()
     }
 
     if (!adc.writeRegister(ADS131M08::REG_MODE, MODE_CONFIG) ||
-        !adc.setOversampling(osr))
+        !adc.setOversampling(settings.osr) ||
+        !adc.setExternalReference(settings.externalReference))
     {
         std::cerr << sensorID << ": failed to configure ADS131M08" << std::endl;
         return false;
@@ -116,7 +115,7 @@ bool StrainGaugeSensor::init()
         }
     }
 
-    if (globalChop && !adc.setGlobalChop(true))
+    if (settings.globalChop && !adc.setGlobalChop(true))
     {
         std::cerr << sensorID << ": failed to enable global chop" << std::endl;
         return false;
@@ -152,7 +151,7 @@ bool StrainGaugeSensor::read()
     std::array<double, ADS131M08::NUM_CHANNELS> volts{};
     bool saturated = false;
 
-    if (!initialised || !acquire(samplesPerReading, volts, saturated))
+    if (!initialised || !acquire(settings.samplesPerReading, volts, saturated))
     {
         lastReading.values.clear();
         lastReading.isValid = false;
@@ -246,7 +245,7 @@ bool StrainGaugeSensor::acquire(
 
     // Without a DRDY interrupt the STATUS register is polled. Allow twice
     // the expected conversion time, plus margin for scheduling delays.
-    double samplePeriodMs = 1000.0 / ADS131M08::dataRateHz(clockHz, osr);
+    double samplePeriodMs = 1000.0 / ADS131M08::dataRateHz(settings.clockHz, settings.osr);
 
     auto deadline =
         std::chrono::steady_clock::now()
@@ -290,7 +289,7 @@ bool StrainGaugeSensor::acquire(
                 saturated = true;
             }
 
-            sums[config.channel] += ADS131M08::codeToVolts(code, config.pgaGain);
+            sums[config.channel] += ADS131M08::codeToVolts(code, config.pgaGain, vref);
         }
 
         collected++;
@@ -322,13 +321,21 @@ bool StrainGaugeSensor::validateConfig() const
         return false;
     }
 
-    if (clockHz == 0)
+    if (settings.clockHz == 0)
     {
         std::cerr << sensorID << ": clockHz must be set" << std::endl;
         return false;
     }
 
-    if (samplesPerReading < 1)
+    // The ADS131M08 accepts 1.1 V to 1.3 V on REFIN
+    if (settings.externalReference &&
+        (settings.refinVolts < 1.1f || settings.refinVolts > 1.3f))
+    {
+        std::cerr << sensorID << ": refinVolts must be between 1.1 V and 1.3 V" << std::endl;
+        return false;
+    }
+
+    if (settings.samplesPerReading < 1)
     {
         std::cerr << sensorID << ": samplesPerReading must be at least 1" << std::endl;
         return false;

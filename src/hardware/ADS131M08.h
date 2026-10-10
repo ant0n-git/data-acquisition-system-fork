@@ -27,8 +27,10 @@ public:
     static constexpr std::size_t FRAME_WORDS = NUM_CHANNELS + 2;
     static constexpr std::size_t FRAME_BYTES = FRAME_WORDS * WORD_BYTES;
 
-    // Internal reference voltage. Full-scale range is +/- VREF / gain.
-    static constexpr float VREF = 1.2f;
+    // Full-scale range is +/- VREF / gain, where VREF is either the
+    // internal 1.2 V reference or 0.96 * the voltage on REFIN.
+    static constexpr float INTERNAL_VREF = 1.2f;
+    static constexpr float EXTERNAL_REF_SCALE = 0.96f;
 
     // Commands
     static constexpr uint16_t CMD_NULL = 0x0000;
@@ -47,6 +49,9 @@ public:
     static constexpr uint8_t REG_GAIN1 = 0x04;
     static constexpr uint8_t REG_GAIN2 = 0x05;
     static constexpr uint8_t REG_CFG = 0x06;
+
+    // CLOCK register bits
+    static constexpr uint16_t CLOCK_EXTREF_EN = 0x0040;
 
     // Oversampling ratio. Output data rate = (CLKIN / 2) / OSR,
     // e.g. 4.096 MHz CLKIN with OSR 4096 gives 500 SPS.
@@ -87,6 +92,10 @@ public:
     // Enables all channels, sets the OSR and selects high-resolution mode.
     bool setOversampling(OSR osr);
 
+    // Selects the voltage on REFIN (EXTREF_EN) instead of the internal
+    // reference. With the internal reference, REFIN is driven by the device.
+    bool setExternalReference(bool enabled);
+
     // Global-chop mode removes most of the PGA offset and offset drift,
     // at the cost of a lower effective data rate.
     bool setGlobalChop(bool enabled);
@@ -98,8 +107,15 @@ public:
     // Output data rate in samples per second for a given CLKIN frequency.
     static double dataRateHz(uint32_t clkinHz, OSR osr);
 
+    // Reference voltage the ADC uses for conversions.
+    static float effectiveReference(bool externalReference, float refinVolts);
+
     // Converts a raw code to the differential input voltage in volts.
-    static float codeToVolts(int32_t code, uint8_t gain);
+    static float codeToVolts(
+        int32_t code,
+        uint8_t gain,
+        float vref = INTERNAL_VREF
+    );
 
     // True if the code is at either end of the 24-bit range.
     static bool isSaturated(int32_t code);

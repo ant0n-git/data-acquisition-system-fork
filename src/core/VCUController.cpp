@@ -70,8 +70,10 @@ void VCUController::setup()
                 1
             );
 
-        // TODO: Set channels, gauge factor, excitation voltage and
-        // PGA gain to match the strain gauge PCB and bridges.
+        // Single full bridge in bending on AIN0.
+        // TODO: Set the gauge factor from the gauge datasheet, and the
+        // excitation voltage to the rail powering the bridge (2.5 V if
+        // it shares the REFIN rail).
         StrainChannelConfig bridge0;
         bridge0.name = "strain_0";
         bridge0.channel = 0;

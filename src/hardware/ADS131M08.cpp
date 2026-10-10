@@ -130,11 +130,40 @@ bool ADS131M08::setChannelGain(int channel, uint8_t gain)
 
 bool ADS131M08::setOversampling(OSR osr)
 {
+    uint16_t value = 0;
+
+    if (!readRegister(REG_CLOCK, value))
+    {
+        return false;
+    }
+
     // CH7_EN..CH0_EN = 1, OSR in bits 4:2, PWR = 0b10 (high resolution).
     // High-resolution mode also works with CLKIN below 8.192 MHz.
-    uint16_t value = static_cast<uint16_t>(
-        0xFF00 | (static_cast<uint8_t>(osr) << 2) | 0x2
+    // Bits 7:5 (XTAL_DIS, EXTREF_EN, TBM) are kept.
+    value = static_cast<uint16_t>(
+        (value & 0x00E0) | 0xFF00 | (static_cast<uint8_t>(osr) << 2) | 0x2
     );
+
+    return writeRegister(REG_CLOCK, value);
+}
+
+bool ADS131M08::setExternalReference(bool enabled)
+{
+    uint16_t value = 0;
+
+    if (!readRegister(REG_CLOCK, value))
+    {
+        return false;
+    }
+
+    if (enabled)
+    {
+        value = static_cast<uint16_t>(value | CLOCK_EXTREF_EN);
+    }
+    else
+    {
+        value = static_cast<uint16_t>(value & ~CLOCK_EXTREF_EN);
+    }
 
     return writeRegister(REG_CLOCK, value);
 }
@@ -176,10 +205,17 @@ double ADS131M08::dataRateHz(uint32_t clkinHz, OSR osr)
     return (clkinHz / 2.0) / ratios[static_cast<uint8_t>(osr) & 0x7];
 }
 
-float ADS131M08::codeToVolts(int32_t code, uint8_t gain)
+float ADS131M08::effectiveReference(bool externalReference, float refinVolts)
+{
+    return externalReference
+        ? EXTERNAL_REF_SCALE * refinVolts
+        : INTERNAL_VREF;
+}
+
+float ADS131M08::codeToVolts(int32_t code, uint8_t gain, float vref)
 {
     // 1 LSB = (2 * VREF / gain) / 2^24 = VREF / (gain * 2^23)
-    return static_cast<float>(code) * VREF
+    return static_cast<float>(code) * vref
         / (static_cast<float>(gain) * 8388608.0f);
 }
 

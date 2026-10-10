@@ -662,7 +662,7 @@ tests/test_strain_gauge.cpp
 SPI settings
 The ADS131M08 uses SPI mode 1 (CPOL = 0, CPHA = 1), not the `SPIBus` default of mode 0. `VCUController` opens `/dev/spidev0.0` at 1 MHz in mode 1 (see `SystemConfig`). Frames are 10 words of 24 bits (30 bytes): a response word, eight channel words and a CRC word.
 Hardware requirements
-CLKIN is driven by the on-board SiT1602BC-21-25E-4.096000G oscillator (4.096 MHz, 2.5 V). This frequency is set by `StrainGaugeSensor::DEFAULT_CLOCK_HZ`, so change it there if the oscillator changes. The output data rate is (CLKIN / 2) / OSR:
+CLKIN is driven by the on-board SiT1602BC-21-25E-4.096000G oscillator (4.096 MHz, 2.5 V). This frequency is set by `StrainGaugeADCSettings::clockHz`, so change it there if the oscillator changes. The output data rate is (CLKIN / 2) / OSR:
 ```text
 OSR     Data rate at 4.096 MHz
 1024    2000 SPS
@@ -672,6 +672,23 @@ OSR     Data rate at 4.096 MHz
 16256    126 SPS
 ```
 With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
+Voltage reference
+AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
+If a bridge is excited from the same 2.5 V rail, the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected. Set `excitationVoltage = 2.5f` in that case.
+Board connector (J3)
+```text
+J3 pin   Signal         Raspberry Pi 5 header
+1        3.3 V          pin 1 or 17
+2        GND            any GND
+3        SCLK           pin 23 (GPIO 11)
+4        DIN  (MOSI)    pin 19 (GPIO 10)
+5        DOUT (MISO)    pin 21 (GPIO 9)
+6        CS             pin 24 (GPIO 8, CE0)  -> /dev/spidev0.0
+                        or pin 26 (GPIO 7, CE1) -> /dev/spidev0.1
+7        DRDY           not used by the software yet
+8        GND            any GND
+```
+SYNC/RESET is pulled up to 3.3 V on the board through R19.
 Raspberry Pi 5 setup
 Enable SPI with `sudo raspi-config` → Interface Options → SPI, or add `dtparam=spi=on` to `/boot/firmware/config.txt`, then reboot. Check that `/dev/spidev0.0` exists (`ls /dev/spidev*`). This is SPI0 with chip select CE0 (GPIO 8, header pin 24). If the ADC's CS is wired to CE1 (GPIO 7, pin 26), change `spiDevicePath` in `SystemConfig` to `/dev/spidev0.1`. Other SPI0 pins: SCLK GPIO 11 (pin 23), MOSI GPIO 10 (pin 19), MISO GPIO 9 (pin 21). The Pi 5's GPIO uses 3.3 V logic.
 Channel configuration
@@ -706,6 +723,7 @@ Example packet:
 ```json
 {"sensor":"strain_1","timestamp":1791119904187,"values":{"strain_0_microstrain":512.4,"strain_0_mv":4.62},"valid":true}
 ```
+Settings shared by all channels (oversampling, samples per reading, global chop, clock frequency and reference) are passed as a `StrainGaugeADCSettings`, whose defaults match the strain gauge PCB.
 `valid` is false if any configured input is saturated. If that happens, lower the PGA gain.
 Strain gauge test
 `tests/test_strain_gauge.cpp` checks the driver and strain maths against a simulated ADS131M08, so it runs on any Linux machine without hardware:

@@ -31,8 +31,31 @@ struct StrainChannelConfig
     float excitationVoltage = 3.3f;
 
     // PGA gain: 1, 2, 4, 8, 16, 32, 64 or 128.
-    // Input range is +/- 1.2 V / gain (e.g. +/- 37.5 mV at gain 32).
+    // Input range is +/- 1.2 V / gain (e.g. +/- 37.5 mV at gain 32)
+    // with the internal reference or REFIN = 1.25 V.
     uint8_t pgaGain = 32;
+};
+
+// ADC settings shared by all channels. The defaults match the strain
+// gauge PCB.
+struct StrainGaugeADCSettings
+{
+    ADS131M08::OSR osr = ADS131M08::OSR::OSR_4096;
+
+    // Conversions averaged per read()
+    int samplesPerReading = 8;
+
+    // Reduces offset drift, at the cost of a lower data rate
+    bool globalChop = false;
+
+    // CLKIN from the on-board SiT1602BC-21-25E-4.096000G oscillator
+    uint32_t clockHz = 4096000;
+
+    // REFIN is driven to 1.25 V by a 10k/10k divider from the 2.5 V rail.
+    // If the bridges are excited from the same 2.5 V rail, the measurement
+    // is ratiometric and rail tolerance cancels out.
+    bool externalReference = true;
+    float refinVolts = 1.25f;
 };
 
 // Strain gauge sensor that reads full Wheatstone bridges through an
@@ -43,14 +66,8 @@ public:
         std::string id,
         SPIBus& sharedBus,
         std::vector<StrainChannelConfig> channels,
-        ADS131M08::OSR osr = ADS131M08::OSR::OSR_4096,
-        int samplesPerReading = 8,
-        bool globalChop = false,
-        uint32_t clockHz = DEFAULT_CLOCK_HZ
+        StrainGaugeADCSettings settings = StrainGaugeADCSettings()
     );
-
-    // CLKIN from the on-board SiT1602BC-21-25E-4.096000G oscillator
-    static constexpr uint32_t DEFAULT_CLOCK_HZ = 4096000;
 
     ~StrainGaugeSensor() override = default;
 
@@ -66,10 +83,10 @@ public:
 private:
     ADS131M08 adc;
     std::vector<StrainChannelConfig> channels;
-    ADS131M08::OSR osr;
-    int samplesPerReading;
-    bool globalChop;
-    uint32_t clockHz;
+    StrainGaugeADCSettings settings;
+
+    // Conversion reference voltage, from the settings
+    float vref;
 
     bool initialised;
 

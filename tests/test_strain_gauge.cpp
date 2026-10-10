@@ -48,6 +48,9 @@ public:
     // Differential input voltage on each channel
     std::array<double, ADS131M08::NUM_CHANNELS> inputVolts{};
 
+    // Voltage on the REFIN pin, used when EXTREF_EN is set
+    double refinVolts = 1.25;
+
     bool corruptNextCrc = false;
     bool present = true;
     int framesBetweenConversions = 0;
@@ -163,7 +166,9 @@ private:
 
     int32_t codeFor(int channel) const
     {
-        double lsb = ADS131M08::VREF / (gainOf(channel) * 8388608.0);
+        bool external = registers[ADS131M08::REG_CLOCK] & ADS131M08::CLOCK_EXTREF_EN;
+        double vref = external ? 0.96 * refinVolts : 1.2;
+        double lsb = vref / (gainOf(channel) * 8388608.0);
         double code = std::round(inputVolts[channel] / lsb);
 
         if (code > 8388607.0) code = 8388607.0;
@@ -204,6 +209,8 @@ static void testConversion()
 {
     check(near(ADS131M08::codeToVolts(0x7FFFFF, 1), 1.2, 1e-6), "full scale at gain 1 is 1.2 V");
     check(near(ADS131M08::codeToVolts(-0x800000, 32), -0.0375, 1e-7), "negative full scale at gain 32 is -37.5 mV");
+    check(near(ADS131M08::effectiveReference(true, 1.25f), 1.2, 1e-6), "REFIN 1.25 V gives a 1.2 V reference");
+    check(near(ADS131M08::effectiveReference(false, 1.25f), 1.2, 1e-6), "internal reference is 1.2 V");
     check(near(ADS131M08::dataRateHz(4096000, ADS131M08::OSR::OSR_4096), 500.0, 1e-9), "4.096 MHz CLKIN at OSR 4096 gives 500 SPS");
     check(ADS131M08::isValidGain(128) && !ADS131M08::isValidGain(3) && !ADS131M08::isValidGain(0), "gain validation");
 }
@@ -224,6 +231,8 @@ static void testDriverRegisters()
     check(adc.setOversampling(ADS131M08::OSR::OSR_4096), "set OSR");
     check(fake.registers[ADS131M08::REG_CLOCK] == 0xFF16, "CLOCK register = 0xFF16 for OSR 4096");
 
+    check(adc.setExternalReference(true) && fake.registers[ADS131M08::REG_CLOCK] == 0xFF56, "EXTREF_EN set in CLOCK");
+    check(adc.setOversampling(ADS131M08::OSR::OSR_1024) && fake.registers[ADS131M08::REG_CLOCK] == 0xFF4E, "changing OSR keeps EXTREF_EN");
     check(adc.setGlobalChop(true) && fake.registers[ADS131M08::REG_CFG] == 0x0700, "global chop sets GC_EN");
 }
 
@@ -248,6 +257,7 @@ static void testStrainSensor()
 
     check(!sensor.read(), "read fails before init");
     check(sensor.init(), "sensor init");
+    check(fake.registers[ADS131M08::REG_CLOCK] & ADS131M08::CLOCK_EXTREF_EN, "external reference enabled by default");
     check(fake.gainOf(0) == 32 && fake.gainOf(3) == 128, "per-channel gains applied");
 
     // Bridge imbalance at no load
@@ -277,6 +287,31 @@ static void testStrainSensor()
     // Drive the gain 128 input past its +/- 9.375 mV range
     fake.inputVolts[3] = 0.02;
     check(sensor.read() && !reading.isValid, "saturated input marks reading invalid");
+}
+
+// Bridge excited from the same 2.5 V rail that feeds the REFIN divider
+static void testRatiometric()
+{
+    FakeADS131M08 fake;
+
+    StrainChannelConfig config;
+    config.name = "gauge";
+    config.excitationVoltage = 2.5f;
+
+    StrainGaugeSensor sensor("strain_ratio", fake, {config});
+
+    check(sensor.init() && sensor.tare(20), "ratiometric init and tare");
+
+    // The 2.5 V rail is actually 2% low: excitation and REFIN both drop
+    double rail = 2.45;
+    fake.refinVolts = rail / 2.0;
+    fake.inputVolts[0] = 800e-6 * 2.0 * rail;
+
+    check(sensor.read(), "ratiometric read");
+    check(
+        near(sensor.getLastReading().values.at("gauge_microstrain"), 800.0, 1.0),
+        "2.5 V rail error cancels out (800 microstrain)"
+    );
 }
 
 static void testMissingDevice()
@@ -330,6 +365,7 @@ int main()
     testConversion();
     testDriverRegisters();
     testStrainSensor();
+    testRatiometric();
     testMissingDevice();
     testNoConversions();
     testBadConfig();
