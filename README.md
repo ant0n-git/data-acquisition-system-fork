@@ -3,7 +3,7 @@ This repository contains the Raspberry Pi Vehicle Control Unit (VCU) software us
 The VCU currently performs two main tasks:
 Reads vehicle sensor data.
 Streams camera footage and telemetry to the rider phone.
-The camera and telemetry pipelines are intentionally kept separate. SPI support has been added as an independent hardware communication layer; no SPI sensor is registered yet.
+The camera and telemetry pipelines are intentionally kept separate. SPI support has been added as an independent hardware communication layer and is used by the ADS131M08 strain gauge sensor.
 ---
 Current System Architecture
 ```text
@@ -609,7 +609,7 @@ Ctrl+C
 to exit netcat.
 ---
 SPI Communication (New — Hardware Layer)
-The VCU now includes a reusable SPI bus implementation in addition to the existing I2C bus. SPI support is not yet connected to `VCUController` or `SensorManager`, and no SPI sensor driver has been added.
+The VCU now includes a reusable SPI bus implementation in addition to the existing I2C bus. It is used by the ADS131M08 strain gauge sensor described below.
 Files
 ```text
 src/hardware/SPIBus.h
@@ -642,8 +642,67 @@ ls /dev/spidev*
 ```
 If needed, enable SPI under `sudo raspi-config` → Interface Options → SPI. Device names may vary with configuration.
 Test status: The SPI code has been compiled with C++17 in WSL. A successful compile confirms source-level buildability, not successful communication with an SPI peripheral. WSL usually has no `/dev/spidev0.0`, and even a successful transfer on a Pi without a connected peripheral does not validate sensor data.
-Future SPI sensor integration
-When an SPI device is selected, implement a sensor-specific driver that reads the required registers and writes a `SensorReading`. Register it with `SensorManager` during `VCUController::setup()`. The existing `DataSerialiser` → `CommunicationManager` → phone telemetry path should remain unchanged. The camera pipeline is also unaffected.
+Adding SPI sensors
+SPI sensors inherit from `SPISensor` (`src/sensors/SPISensor.h`), which holds a reference to a shared `SPIBus`. Implement a sensor-specific driver that writes a `SensorReading` and register it with `SensorManager` during `VCUController::setup()`. The existing `DataSerialiser` → `CommunicationManager` → phone telemetry path should remain unchanged. The camera pipeline is also unaffected.
+`openBus()`, `transfer()` and `isOpen()` are virtual so that tests can replace the bus with a simulated device.
+---
+Strain Gauges (ADS131M08 over SPI)
+Full Wheatstone bridge strain gauges are read through a TI ADS131M08 8-channel, 24-bit ADC.
+Files
+```text
+src/hardware/ADS131M08.h
+src/hardware/ADS131M08.cpp
+src/sensors/SPISensor.h
+src/sensors/SPISensor.cpp
+src/sensors/analog/StrainGaugeSensor.h
+src/sensors/analog/StrainGaugeSensor.cpp
+tests/test_strain_gauge.cpp
+```
+`ADS131M08` is the chip driver: frame building, RESET/RREG/WREG/NULL commands, PGA gain, oversampling ratio, global chop and output CRC checking. `StrainGaugeSensor` turns bridge voltages into strain.
+SPI settings
+The ADS131M08 uses SPI mode 1 (CPOL = 0, CPHA = 1), not the `SPIBus` default of mode 0. `VCUController` opens `/dev/spidev0.0` at 1 MHz in mode 1 (see `SystemConfig`). Frames are 10 words of 24 bits (30 bytes): a response word, eight channel words and a CRC word.
+Hardware requirements
+The ADS131M08 needs a clock on CLKIN (normally 8.192 MHz) and its SYNC/RESET pin held high. The output data rate is (CLKIN / 2) / OSR, so with the default OSR of 4096 it runs at 1 kSPS. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead.
+Channel configuration
+Each bridge is described by a `StrainChannelConfig`:
+```cpp
+StrainChannelConfig bridge0;
+bridge0.name = "strain_0";        // telemetry key prefix
+bridge0.channel = 0;              // AIN0P / AIN0N
+bridge0.gaugeFactor = 2.0f;       // from the gauge datasheet
+bridge0.bridgeFactor = 1.0f;      // 1.0 for 4 active gauges
+bridge0.excitationVoltage = 3.3f; // bridge excitation
+bridge0.pgaGain = 32;             // input range +/- 1.2 V / gain
+```
+Strain is calculated as:
+```text
+strain = (Vout - Vout_at_tare) / Vex / (gaugeFactor * bridgeFactor)
+```
+Use `bridgeFactor = (1 + poisson) / 2` for a full bridge with two axial and two Poisson gauges. A negative `bridgeFactor` flips the sign if the bridge is wired the other way round.
+Choose the PGA gain so the largest expected bridge output, plus any bridge imbalance, stays inside +/- 1.2 V / gain. For example, 1000 microstrain with GF 2.0 and 3.3 V excitation gives 6.6 mV, which fits at gain 64 (+/- 18.75 mV) or gain 128 (+/- 9.375 mV) with little margin.
+Up to eight bridges can be read by one sensor by passing several `StrainChannelConfig` entries.
+Startup and readings
+During `VCUController::setup()` the sensor resets the ADC, checks the ID register, configures it, and then tares. The structure must be unloaded while this message is displayed:
+```text
+Keep strain gauges unloaded for taring...
+```
+Each `read()` averages 8 fresh conversions per channel and produces, for each bridge:
+```text
+<name>_microstrain
+<name>_mv           raw bridge output before taring
+```
+Example packet:
+```json
+{"sensor":"strain_1","timestamp":1791119904187,"values":{"strain_0_microstrain":512.4,"strain_0_mv":4.62},"valid":true}
+```
+`valid` is false if any configured input is saturated. If that happens, lower the PGA gain.
+Strain gauge test
+`tests/test_strain_gauge.cpp` checks the driver and strain maths against a simulated ADS131M08, so it runs on any Linux machine without hardware:
+```bash
+g++ -std=c++17 tests/test_strain_gauge.cpp src/hardware/SPIBus.cpp src/hardware/ADS131M08.cpp src/sensors/SPISensor.cpp src/sensors/analog/StrainGaugeSensor.cpp -Isrc -Isrc/hardware -Isrc/sensors -Isrc/sensors/analog -o test_strain_gauge
+./test_strain_gauge
+```
+Test status: the strain gauge code passes the simulated-device test but has not yet been run against a real ADS131M08.
 ---
 Adding a New Sensor
 When adding another sensor, preserve the current architecture:
@@ -746,6 +805,8 @@ src/
 
 ├── hardware/
 
+│   ├── ADS131M08.cpp
+│   ├── ADS131M08.h
 │   ├── I2CBus.cpp
 
 │   ├── I2CBus.h
@@ -782,7 +843,7 @@ Building the VCU
 From the repository root:
 ```bash
 
-g++ -std=c++17 src/main.cpp src/core/VCUController.cpp src/core/SensorManager.cpp src/config/SystemConfig.cpp src/communication/CommunicationManager.cpp src/data/DataSerialiser.cpp src/data/SensorReading.cpp src/hardware/I2CBus.cpp src/hardware/SPIBus.cpp src/sensors/I2CSensor.cpp src/sensors/GyroscopeSensor.cpp src/sensors/Camera.cpp -I. -Isrc -Isrc/core -Isrc/config -Isrc/communication -Isrc/data -Isrc/hardware -Isrc/sensors -Isrc/sensors/i2c -Isrc/sensors/analog -Isrc/util -pthread -o vcu
+g++ -std=c++17 src/main.cpp src/core/VCUController.cpp src/core/SensorManager.cpp src/config/SystemConfig.cpp src/communication/CommunicationManager.cpp src/data/DataSerialiser.cpp src/data/SensorReading.cpp src/hardware/I2CBus.cpp src/hardware/SPIBus.cpp src/hardware/ADS131M08.cpp src/sensors/I2CSensor.cpp src/sensors/SPISensor.cpp src/sensors/GyroscopeSensor.cpp src/sensors/analog/StrainGaugeSensor.cpp src/sensors/Camera.cpp -I. -Isrc -Isrc/core -Isrc/config -Isrc/communication -Isrc/data -Isrc/hardware -Isrc/sensors -Isrc/sensors/i2c -Isrc/sensors/analog -Isrc/util -pthread -o vcu
 
 ```
 Run with:

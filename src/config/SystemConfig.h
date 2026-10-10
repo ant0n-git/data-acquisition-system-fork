@@ -9,6 +9,10 @@ public:
 
     std::string getI2CDevicePath() const;
 
+    std::string getSPIDevicePath() const;
+
+    unsigned int getSPISpeedHz() const;
+
     int getSensorReadIntervalMs() const;
 
     std::string getDeviceName() const;
@@ -17,6 +21,8 @@ public:
 
 private:
     std::string i2cDevicePath;
+    std::string spiDevicePath;
+    unsigned int spiSpeedHz;
     int sensorReadIntervalMs;
     std::string deviceName;
     bool debugEnabled;

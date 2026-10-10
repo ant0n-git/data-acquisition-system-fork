@@ -9,7 +9,9 @@
 VCUController::VCUController()
     : config(),
       i2cBus(nullptr),
+      spiBus(nullptr),
       gyroSensor(nullptr),
+      strainSensor(nullptr),
       sensorManager(),
       dataSerialiser(),
       communicationManager(),
@@ -58,6 +60,45 @@ void VCUController::setup()
             << std::endl;
     }
 
+    try
+    {
+        // ADS131M08 strain gauge ADC. The ADS131M08 uses SPI mode 1.
+        spiBus =
+            std::make_unique<SPIBus>(
+                config.getSPIDevicePath(),
+                config.getSPISpeedHz(),
+                1
+            );
+
+        // TODO: Set channels, gauge factor, excitation voltage and
+        // PGA gain to match the strain gauge PCB and bridges.
+        StrainChannelConfig bridge0;
+        bridge0.name = "strain_0";
+        bridge0.channel = 0;
+        bridge0.gaugeFactor = 2.0f;
+        bridge0.bridgeFactor = 1.0f;
+        bridge0.excitationVoltage = 3.3f;
+        bridge0.pgaGain = 32;
+
+        strainSensor =
+            std::make_shared<StrainGaugeSensor>(
+                "strain_1",
+                *spiBus,
+                std::vector<StrainChannelConfig>{bridge0}
+            );
+
+        sensorManager.addSensor(
+            strainSensor
+        );
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr
+            << "Failed to set up strain gauges: "
+            << e.what()
+            << std::endl;
+    }
+
     bool initSuccess =
         sensorManager.initAll();
 
@@ -79,6 +120,15 @@ void VCUController::setup()
         std::cout
             << "Gyroscope calibration complete."
             << std::endl;
+    }
+
+    if (strainSensor && strainSensor->isInitialised())
+    {
+        std::cout
+            << "Keep strain gauges unloaded for taring..."
+            << std::endl;
+
+        strainSensor->tare();
     }
 
     running = true;
