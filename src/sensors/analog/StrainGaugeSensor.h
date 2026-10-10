@@ -27,8 +27,8 @@ struct StrainChannelConfig
     // A negative value flips the sign if the bridge is wired the other way.
     float bridgeFactor = 1.0f;
 
-    // Bridge excitation voltage
-    float excitationVoltage = 3.3f;
+    // Bridge excitation voltage (2.5 V rail on the strain gauge PCB)
+    float excitationVoltage = 2.5f;
 
     // PGA gain: 1, 2, 4, 8, 16, 32, 64 or 128.
     // Input range is +/- 1.2 V / gain (e.g. +/- 37.5 mV at gain 32)

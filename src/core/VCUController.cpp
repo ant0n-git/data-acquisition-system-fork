@@ -70,16 +70,16 @@ void VCUController::setup()
                 1
             );
 
-        // Single full bridge in bending on AIN0.
-        // TODO: Set the gauge factor from the gauge datasheet, and the
-        // excitation voltage to the rail powering the bridge (2.5 V if
-        // it shares the REFIN rail).
+        // Single full bridge in bending on AIN0, excited from the same
+        // 2.5 V rail as REFIN, so the measurement is ratiometric.
+        // TODO: Set the gauge factor from the gauge datasheet, and raise
+        // the PGA gain once the strain range is known.
         StrainChannelConfig bridge0;
         bridge0.name = "strain_0";
         bridge0.channel = 0;
         bridge0.gaugeFactor = 2.0f;
         bridge0.bridgeFactor = 1.0f;
-        bridge0.excitationVoltage = 3.3f;
+        bridge0.excitationVoltage = 2.5f;
         bridge0.pgaGain = 32;
 
         strainSensor =

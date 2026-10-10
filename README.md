@@ -674,7 +674,7 @@ OSR     Data rate at 4.096 MHz
 With the default 8 samples per reading, each `read()` takes about 16 ms. The SYNC/RESET pin must be held high. The DRDY pin is not used: the driver polls the STATUS register's DRDY bits instead. If CLKIN is missing, the ADC still answers commands but never produces data, and initialisation fails with `timed out waiting for ADS131M08 data (check CLKIN)`.
 Voltage reference
 AVDD and DVDD are both 3.3 V. The ADS131M08 has no AVSS pin: AGND (0 V) is its negative supply. REFIN is driven to 1.25 V by a 10k/10k divider (R9/R12) from the 2.5 V rail, so the driver sets EXTREF_EN to use it as the reference. The ADC then uses 0.96 × REFIN = 1.2 V, which gives a full-scale range of ±1.2 V / gain. These are the defaults in `StrainGaugeADCSettings` (`externalReference`, `refinVolts`).
-If a bridge is excited from the same 2.5 V rail, the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected. Set `excitationVoltage = 2.5f` in that case.
+The bridges are excited from the same 2.5 V rail, so the measurement is ratiometric: a low or noisy rail scales the bridge output and the reference together, so the strain value is unaffected.
 Board connector (J3)
 ```text
 J3 pin   Signal         Raspberry Pi 5 header
@@ -699,7 +699,7 @@ bridge0.name = "strain_0";        // telemetry key prefix
 bridge0.channel = 0;              // AIN0P / AIN0N
 bridge0.gaugeFactor = 2.0f;       // from the gauge datasheet
 bridge0.bridgeFactor = 1.0f;      // 1.0 for 4 active gauges
-bridge0.excitationVoltage = 3.3f; // bridge excitation
+bridge0.excitationVoltage = 2.5f; // bridge excitation (2.5 V rail)
 bridge0.pgaGain = 32;             // input range +/- 1.2 V / gain
 ```
 Strain is calculated as:
@@ -707,7 +707,7 @@ Strain is calculated as:
 strain = (Vout - Vout_at_tare) / Vex / (gaugeFactor * bridgeFactor)
 ```
 Use `bridgeFactor = (1 + poisson) / 2` for a full bridge with two axial and two Poisson gauges. A negative `bridgeFactor` flips the sign if the bridge is wired the other way round.
-Choose the PGA gain so the largest expected bridge output, plus any bridge imbalance, stays inside +/- 1.2 V / gain. For example, 1000 microstrain with GF 2.0 and 3.3 V excitation gives 6.6 mV, which fits at gain 64 (+/- 18.75 mV) or gain 128 (+/- 9.375 mV) with little margin.
+Choose the PGA gain so the largest expected bridge output, plus any bridge imbalance, stays inside +/- 1.2 V / gain. For example, 1000 microstrain with GF 2.0 and 2.5 V excitation gives 5 mV, which fits at gain 64 (+/- 18.75 mV) or gain 128 (+/- 9.375 mV).
 Up to eight bridges can be read by one sensor by passing several `StrainChannelConfig` entries.
 Startup and readings
 During `VCUController::setup()` the sensor resets the ADC, checks the ID register, configures it, and then tares. The structure must be unloaded while this message is displayed:
