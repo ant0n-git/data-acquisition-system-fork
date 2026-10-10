@@ -21,6 +21,8 @@ public:
         int delayMs = 5
     );
 
+    bool isInitialised() const;
+
 private:
     static constexpr uint8_t ADDRESS = 0x68;
 
@@ -40,6 +42,8 @@ private:
     float gyroBiasX;
     float gyroBiasY;
     float gyroBiasZ;
+
+    bool initialised;
 
     static int16_t combineSigned(
         uint8_t high,

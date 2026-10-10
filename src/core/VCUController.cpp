@@ -121,7 +121,9 @@ void VCUController::setup()
             << std::endl;
     }
 
-    if (initSuccess && gyroSensor)
+    // Checked per sensor, so a failed strain gauge board does not
+    // stop the gyroscope from being calibrated.
+    if (gyroSensor && gyroSensor->isInitialised())
     {
         std::cout
             << "Keep gyroscope still for calibration..."

@@ -17,7 +17,8 @@ GyroscopeSensor::GyroscopeSensor(
       temperatureC(0.0f),
       gyroBiasX(0.0f),
       gyroBiasY(0.0f),
-      gyroBiasZ(0.0f)
+      gyroBiasZ(0.0f),
+      initialised(false)
 {
     lastReading.sensorID = sensorID;
     lastReading.timestamp = 0;
@@ -27,6 +28,8 @@ GyroscopeSensor::GyroscopeSensor(
 
 bool GyroscopeSensor::init()
 {
+    initialised = false;
+
     auto whoami =
         bus.readRegisters(
             deviceAddress,
@@ -127,7 +130,14 @@ bool GyroscopeSensor::init()
         << ": MPU6050 initialised successfully"
         << std::endl;
 
+    initialised = true;
+
     return true;
+}
+
+bool GyroscopeSensor::isInitialised() const
+{
+    return initialised;
 }
 
 bool GyroscopeSensor::read()
